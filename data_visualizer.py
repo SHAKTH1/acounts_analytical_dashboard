@@ -3,6 +3,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+
 # Streamlit Dashboard
 st.set_page_config(page_title="Accounting Dashboard", layout="wide")
 st.markdown(
