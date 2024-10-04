@@ -1,49 +1,12 @@
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit as st
-
 
 # Streamlit Dashboard
 st.set_page_config(page_title="Accounting Dashboard", layout="wide")
-st.markdown(
-    """
-    <style>
-    /* Style the sidebar */
-    .css-18e3th9 {
-        background-color: #2E2E2E;
-        color: white;
-    }
-    
-    /* Style for headers */
-    h1 {
-        color: #ff6347;
-        text-align: center;
-    }
-    
-    /* Fancy filter style */
-    .stSelectbox, .stMultiselect {
-        background-color: #323232;
-        color: white;
-        border-radius: 5px;
-        padding: 10px;
-    }
-    
-    /* Add transition effect */
-    .stContainer {
-        transition: transform 0.2s ease;
-    }
-
-    .stContainer:hover {
-        transform: scale(1.05);
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 st.title('Accounting Analytics Dashboard')
-st.sidebar.title('Data Upload and Filters')
+st.sidebar.title('Data Upload and Selection')
 
 # File upload
 uploaded_file = st.sidebar.file_uploader("Upload your Excel or CSV file", type=['csv', 'xls', 'xlsx'])
@@ -55,152 +18,105 @@ if uploaded_file:
     else:
         df = pd.read_excel(uploaded_file)
     
-    # Clean column names
+    # Clean column names: Strip whitespace and replace NaN with placeholders
     df.columns = df.columns.str.strip()
-    
-    # Drop "Sl No" or other indexing columns if present
-    indexing_columns = [col for col in df.columns if 'sl no' in col.lower() or 'index' in col.lower()]
-    df.drop(columns=indexing_columns, errors='ignore', inplace=True)
-    
-    # Convert columns to datetime if possible, and handle month-only data
-    for col in df.columns:
-        if 'date' in col.lower() or 'month' in col.lower():
-            try:
-                # Handle full date format (DD/MM/YYYY)
-                df[col] = pd.to_datetime(df[col], format='%d/%m/%Y', errors='coerce')
-                df['Month'] = df[col].dt.to_period('M')
-            except:
-                # If parsing fails, handle month names directly (e.g., "Jan", "Feb")
-                if df[col].dtype == 'object':
-                    df['Month'] = df[col].str.capitalize()  # Capitalize to ensure uniform month names
+    df.columns = ['Column_' + str(i) if pd.isna(col) else col for i, col in enumerate(df.columns)]
 
-    # Show data preview
-    st.write("### Data Preview:")
-    st.write(df.head())
+    # Display the entire table for user reference
+    st.write("### Full Table View")
+    st.write(df)
 
-    # Filtering options based on column names
-    st.sidebar.title('Filters')
+    # Create a multiselect box for row selection
+    row_selection = st.multiselect(
+        "Select rows to include in the analysis (by index):",
+        options=df.index.tolist(),
+        default=[],
+        help="Hold down the shift or ctrl key to select multiple rows"
+    )
 
-    # Filter by name (assuming 'Name' column or similar exists)
-    name_column = [col for col in df.columns if 'name' in col.lower() or 'client' in col.lower() or 'employee' in col.lower()]
-    if name_column:
-        name_column = name_column[0]
-        name_options = df[name_column].dropna().unique()
-        selected_name = st.sidebar.selectbox(f'Select {name_column}', ['All'] + list(name_options))
-    else:
-        selected_name = 'All'
+    # Button to submit the selection and create charts
+    submit_button = st.button("Submit", key='submit_button')
 
-    # Filter by month (either extracted from date or month names directly)
-    selected_month = 'All'
-    if 'Month' in df.columns:
-        month_options = df['Month'].dropna().unique()
-        selected_month = st.sidebar.selectbox('Select Month', ['All'] + list(month_options))
+    # Check if the button is clicked and if the number of selected rows is >= 2
+    if submit_button:
+        if len(row_selection) >= 2:
+            # Filter the DataFrame to only include selected rows
+            selected_df = df.loc[row_selection]
 
-    # Filter by project
-    project_column = [col for col in df.columns if 'project' in col.lower()]
-    if project_column:
-        project_column = project_column[0]
-        project_options = df[project_column].dropna().unique()
-        selected_project = st.sidebar.selectbox(f'Select {project_column}', ['All'] + list(project_options))
-    else:
-        selected_project = 'All'
+            # Check if the selected DataFrame has the necessary columns for analysis
+            if len(selected_df.columns) < 3:
+                st.error("The selected data does not have enough columns to perform analysis.")
+            else:
+                # Assume the first column is 'Particulars' and the rest are numerical data
+                particulars_col = selected_df.columns[0]
+                data_cols = selected_df.columns[2:]  # Columns representing months or numerical data
+                
+                # Display the selected rows
+                st.write("### Selected Rows for Analysis")
+                st.write(selected_df)
 
-    # Apply filters
-    filtered_df = df.copy()
-    if selected_name != 'All':
-        filtered_df = filtered_df[filtered_df[name_column] == selected_name]
+                # Bar Chart - Sum of the numerical data columns
+                with st.container():
+                    st.write("### Bar Chart: Sum of Selected Rows")
+                    sum_data = selected_df[data_cols].sum(axis=0)
+                    fig_bar = px.bar(
+                        x=sum_data.index,
+                        y=sum_data.values,
+                        title='Bar Chart for Selected Data',
+                        text=sum_data.values,
+                        labels={'x': 'Categories', 'y': 'Values'}
+                    )
+                    fig_bar.update_traces(texttemplate='%{text:.2s}', textposition='outside')
+                    fig_bar.update_layout(showlegend=False, height=400)
+                    st.plotly_chart(fig_bar, use_container_width=True)
 
-    if selected_month != 'All' and 'Month' in df.columns:
-        filtered_df = filtered_df[filtered_df['Month'] == selected_month]
+                # Pie Chart - Distribution of the first selected numerical column
+                with st.container():
+                    st.write("### Pie Chart: Distribution of First Numerical Column")
+                    first_data_col = data_cols[0]
+                    fig_pie = px.pie(
+                        selected_df,
+                        names=particulars_col,
+                        values=first_data_col,
+                        title=f'Distribution of {first_data_col}',
+                        hole=0.3
+                    )
+                    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
+                    st.plotly_chart(fig_pie, use_container_width=True)
 
-    if selected_project != 'All':
-        filtered_df = filtered_df[filtered_df[project_column] == selected_project]
+                # Line Chart - Trend over the numerical columns
+                with st.container():
+                    st.write("### Line Chart: Trend Over Time")
+                    fig_line = px.line(
+                        selected_df,
+                        x=particulars_col,
+                        y=data_cols,
+                        title='Line Chart for Selected Data Over Time'
+                    )
+                    st.plotly_chart(fig_line, use_container_width=True)
 
-    # Find "amount" related columns
-    amount_columns = [col for col in filtered_df.columns if 'amount' in col.lower()]
-    if not amount_columns:
-        st.warning("No 'Amount' columns found in the dataset.")
-    else:
-        primary_amount_column = amount_columns[0]  # Use the first "amount" column found for the charts
+                # Treemap - Breakdown of the first numerical column by "Particulars"
+                with st.container():
+                    st.write("### Treemap: Breakdown by Particulars")
+                    fig_treemap = px.treemap(
+                        selected_df,
+                        path=[particulars_col],
+                        values=first_data_col,
+                        title='Treemap of Selected Data'
+                    )
+                    st.plotly_chart(fig_treemap, use_container_width=True)
 
-    # Display summary
-    st.write(f"### Summary for Selected Filters")
-    st.write(f"Total Records: {len(filtered_df)}")
-    
-    if primary_amount_column:
-        st.write(f"Total {primary_amount_column}: {filtered_df[primary_amount_column].sum():,.2f}")
-
-    # Create accounting-related charts
-    st.write("## Data Visualizations")
-    
-    # Bar Chart - Group by name and sum the amounts
-    if primary_amount_column:
-        with st.container():
-            st.write("### Bar Chart: Total Amounts by Company")
-            grouped_df = filtered_df.groupby(name_column)[primary_amount_column].sum().reset_index()
-            fig_bar = px.bar(
-                grouped_df, 
-                x=name_column, 
-                y=primary_amount_column, 
-                title=f'Bar Chart for Total {primary_amount_column} by {name_column}',
-                text=primary_amount_column,
-                hover_data={name_column: True, primary_amount_column: True}
-            )
-            # Remove y-axis labels and tick marks
-            fig_bar.update_yaxes(visible=False, showticklabels=False)
-            # Remove column name below the x-axis
-            fig_bar.update_xaxes(title_text='')
-            fig_bar.update_traces(texttemplate='%{text:.2s}', textposition='outside')
-            fig_bar.update_layout(showlegend=False, height=400)
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-    # Replace line chart with a Treemap for hierarchical data visualization
-    if project_column and primary_amount_column and name_column:
-        with st.container():
-            st.write("### Treemap: Breakdown by Project and Company")
-            fig_treemap = px.treemap(
-                filtered_df,
-                path=[project_column, name_column],
-                values=primary_amount_column,
-                title='Treemap of Revenue by Project and Company',
-                hover_data={primary_amount_column: True}
-            )
-            st.plotly_chart(fig_treemap, use_container_width=True)
-
-    # Pie Chart - Distribution of amounts (by name or project)
-    if len(name_column) > 0 and primary_amount_column:
-        with st.container():
-            st.write("### Pie Chart: Distribution")
-            fig_pie = px.pie(
-                filtered_df, 
-                names=name_column, 
-                values=primary_amount_column, 
-                title=f'Distribution of {primary_amount_column} by {name_column}', 
-                hole=0.3,
-                hover_data={primary_amount_column: True}
-            )
-            # Display name, amount, and percentage in the labels
-            fig_pie.update_traces(
-                texttemplate='%{label}<br>Amount: %{value:,.2f}<br>%{percent}', 
-                textposition='inside', 
-                textinfo='label+value+percent',
-                hovertemplate='<b>%{label}</b><br>Amount: %{value:,.2f}<br>Percentage: %{percent}'
-            )
-            fig_pie.update_layout(showlegend=True, height=400)
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-    # Sunburst Chart - Hierarchical visualization (e.g., Project -> Name -> Amount)
-    if project_column and primary_amount_column and name_column:
-        with st.container():
-            st.write("### Sunburst Chart: Hierarchical View")
-            fig_sunburst = px.sunburst(
-                filtered_df, 
-                path=[project_column, name_column], 
-                values=primary_amount_column, 
-                title='Sunburst Chart for Hierarchical Data',
-                hover_data={primary_amount_column: True}
-            )
-            # Display amount with the name in the labels
-            fig_sunburst.update_traces(texttemplate='%{label}<br>Amount: %{value:,.2f}', textinfo='label+value')
-            fig_sunburst.update_layout(height=500)
-            st.plotly_chart(fig_sunburst, use_container_width=True)
+                # Scatter Plot - Correlation between the first two numerical columns
+                if len(data_cols) >= 2:
+                    with st.container():
+                        st.write("### Scatter Plot: Correlation Between Two Numerical Columns")
+                        fig_scatter = px.scatter(
+                            selected_df,
+                            x=data_cols[0],
+                            y=data_cols[1],
+                            title=f'Scatter Plot: {data_cols[0]} vs {data_cols[1]}',
+                            labels={'x': data_cols[0], 'y': data_cols[1]}
+                        )
+                        st.plotly_chart(fig_scatter, use_container_width=True)
+        else:
+            st.warning("Please select at least 2 rows to generate the charts.")
